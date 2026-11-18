@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Con el IVU" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="icon-180.png" />
+    <link rel="icon" href="icon-192.png" />
+    <title>Con el IVU</title>
+    <script>
+      // Registro defensivo del service worker: si no está disponible o falla
+      // (p. ej. en la Librería de Muse), la calculadora sigue igual, en silencio.
+      try {
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.register("sw.js").catch(function(){});
+        }
+      } catch (e) { /* sin service worker: no pasa nada */ }
+    </script>
+    <style>
+      :root{
+        color-scheme: dark;
+        --bg:#000000;
+        --ink:#ffffff;
+        --ink-soft:#a3a3a3;
+        --ink-faint:#6e6e6e;
+        --orange:#ff9f0a;
+        --key-num:#333333;
+        --key-util:#505050;
+      }
+      *{box-sizing:border-box;}
+      html{-webkit-text-size-adjust:100%;}
+      body{
+        margin:0; background:var(--bg); color:var(--ink);
+        font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
+        line-height:1.4; font-variant-numeric:tabular-nums;
+      }
+      button{font:inherit; cursor:pointer; -webkit-tap-highlight-color:transparent;}
+      button:focus-visible{outline:3px solid var(--orange); outline-offset:2px;}
+
+      .wrap{max-width:440px; margin:0 auto; padding:14px 16px 18px; display:flex; flex-direction:column; min-height:100vh; min-height:100dvh;}
+
+      /* ---------- Pantalla ---------- */
+      .display{margin-top:auto; touch-action:pan-y; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;}
+      .expr{min-height:1.3em; text-align:right; color:var(--ink-faint); font-size:1.15rem; font-weight:400; word-break:break-all;}
+      .amount-label{text-align:right; color:var(--ink-faint); font-size:.72rem; font-weight:600; letter-spacing:.06em; text-transform:uppercase; margin-top:2px;}
+      .amount{
+        text-align:right; font-weight:300; line-height:1.05;
+        font-size:clamp(3rem,15vw,4.4rem); word-break:break-all; margin:0;
+        cursor:text;
+      }
+      /* Cursor de edición en el sitio: barra de ancho 0, no mueve el número */
+      .caret{display:inline-block; width:0; height:.85em; position:relative; vertical-align:-.06em;}
+      .caret::before{
+        content:""; position:absolute; left:-2px; top:50%; transform:translateY(-50%);
+        width:3.5px; height:.85em; background:var(--orange); border-radius:2px;
+        animation:caret-blink 1.15s steps(1,end) infinite;
+      }
+      @keyframes caret-blink{ 0%,54%{opacity:1;} 55%,100%{opacity:0;} }
+      .applied-note{min-height:1.1em; text-align:right; color:var(--ink-faint); font-size:.75rem; margin-top:3px; overflow-wrap:break-word;}
+
+      /* ---------- IVU y descuento ---------- */
+      .settings{margin-top:14px;}
+      .set-row{display:flex; align-items:center; gap:10px; margin-top:10px;}
+      .set-label{flex:0 0 86px; font-weight:600; font-size:.85rem; color:var(--ink-soft);}
+      .ivu-toggle{
+        flex:1; min-height:52px; padding:8px 16px; border-radius:999px; border:0;
+        background:var(--key-num); color:var(--ink-soft); font-weight:700; font-size:1.2rem; white-space:nowrap;
+      }
+      .ivu-toggle[aria-pressed="true"]{background:var(--orange); color:#fff;}
+      .ivu-toggle:active{filter:brightness(1.3);}
+      .ivu-toggle.incl{box-shadow:inset 0 0 0 3px rgba(255,255,255,.9);}
+      .input-wrap{
+        flex:1; display:flex; align-items:center; background:#1c1c1e;
+        border-radius:999px; overflow:hidden; min-height:52px;
+      }
+      .field-box{cursor:pointer; user-select:none; -webkit-user-select:none; -webkit-tap-highlight-color:transparent;}
+      .field-value{
+        flex:1; min-width:0; color:var(--ink);
+        font-size:1.15rem; font-weight:600; padding:8px 0 8px 18px; min-height:52px;
+        display:flex; align-items:center;
+      }
+      .field-box:focus-visible{outline:2px solid var(--orange); outline-offset:1px;}
+      .field-box.selected{outline:2px solid var(--orange); outline-offset:1px;}
+      .input-wrap .suffix{padding:0 18px 0 2px; color:var(--ink-faint); font-weight:600; font-size:1rem;}
+
+      /* ---------- Descuento y Tip, lado a lado ---------- */
+      .duo{display:flex; gap:12px; align-items:flex-start;}
+      .duo .field{flex:1 1 0; min-width:0;}
+      .duo .field-label{display:block; font-weight:600; font-size:.8rem; color:var(--ink-soft); margin-bottom:5px;}
+      .duo .field-value{padding-left:14px;}
+      .duo .input-wrap .suffix{padding-right:14px;}
+
+      /* ---------- Teclado grande, como la calculadora del iPhone ---------- */
+      .keypad-section{margin-top:18px;}
+      .keypad{display:grid; grid-template-columns:repeat(4,1fr); gap:12px;}
+      .key{
+        width:min(100%,88px); aspect-ratio:1; justify-self:center; border-radius:50%; border:0;
+        background:var(--key-num); color:#fff;
+        font-size:2rem; font-weight:400; padding:0;
+        user-select:none; touch-action:manipulation;
+        display:flex; align-items:center; justify-content:center;
+      }
+      .key:active{filter:brightness(1.7);}
+      .key.op{background:var(--orange); color:#fff; font-weight:500;}
+      .key.util{background:var(--key-util); color:#fff; font-size:1.25rem; font-weight:500;}
+      .key.equals{background:var(--orange); color:#fff; font-weight:500;}
+      .key.wide{grid-column:span 2; width:100%; aspect-ratio:auto; border-radius:999px;}
+      @media (max-height:720px){
+        .keypad{gap:9px;}
+        .key{font-size:1.7rem;}
+        .amount{font-size:clamp(2.4rem,12vw,3.4rem);}
+        .ivu-toggle, .input-wrap, .field-value{min-height:46px;}
+      }
+      .sr-only{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap;}
+      @media (prefers-reduced-motion: reduce){ .key:active{filter:none;} .caret::before{animation:none;} }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="display" id="displaySection" aria-label="Resultado">
+        <div class="expr" id="expr" aria-hidden="true">&nbsp;</div>
+        <div class="amount-label" id="amountLabel">Total</div>
+        <div class="amount" id="amountDisplay">$0.00</div>
+        <div class="applied-note" id="appliedNote"></div>
+      </section>
+
+      <section class="settings" aria-label="IVU y descuento">
+        <div class="set-row">
+          <span class="set-label">IVU</span>
+          <button type="button" class="ivu-toggle" id="ivuToggle" aria-pressed="true">11.5%</button>
+        </div>
+        <div class="set-row duo">
+          <div class="field">
+            <span class="field-label" id="discLabel">Descuento</span>
+            <div class="input-wrap field-box" id="discBox" tabindex="0" role="spinbutton" aria-labelledby="discLabel" aria-label="Descuento en por ciento. Toca y escribe con el teclado de la calculadora." aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span class="field-value" id="discValue">0</span>
+              <span class="suffix">%</span>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="tipLabel">Tip</span>
+            <div class="input-wrap field-box" id="tipBox" tabindex="0" role="spinbutton" aria-labelledby="tipLabel" aria-label="Tip en por ciento. Toca y escribe con el teclado de la calculadora." aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span class="field-value" id="tipValue">0</span>
+              <span class="suffix">%</span>
+            </div>
+          </div>
+          <div class="field">
+            <span class="field-label" id="peopleLabel">Personas</span>
+            <div class="input-wrap field-box" id="peopleBox" tabindex="0" role="spinbutton" aria-labelledby="peopleLabel" aria-label="Número de personas para dividir el total. Toca y escribe con el teclado de la calculadora." aria-valuemin="1" aria-valuemax="999" aria-valuenow="1">
+              <span class="field-value" id="peopleValue">1</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="keypad-section" aria-label="Teclado">
+        <div class="keypad" id="keypad">
+          <button type="button" class="key util" data-action="clear" aria-label="Borrar todo">AC</button>
+          <button type="button" class="key util" data-action="back" aria-label="Borrar último dígito">⌫</button>
+          <button type="button" class="key util" data-action="sign" aria-label="Cambiar signo">+/−</button>
+          <button type="button" class="key op" data-op="/" aria-label="Dividir">÷</button>
+
+          <button type="button" class="key" data-digit="7">7</button>
+          <button type="button" class="key" data-digit="8">8</button>
+          <button type="button" class="key" data-digit="9">9</button>
+          <button type="button" class="key op" data-op="*" aria-label="Multiplicar">×</button>
+
+          <button type="button" class="key" data-digit="4">4</button>
+          <button type="button" class="key" data-digit="5">5</button>
+          <button type="button" class="key" data-digit="6">6</button>
+          <button type="button" class="key op" data-op="-" aria-label="Restar">−</button>
+
+          <button type="button" class="key" data-digit="1">1</button>
+          <button type="button" class="key" data-digit="2">2</button>
+          <button type="button" class="key" data-digit="3">3</button>
+          <button type="button" class="key op" data-op="+" aria-label="Sumar">+</button>
+
+          <button type="button" class="key wide" data-digit="0">0</button>
+          <button type="button" class="key" data-action="dot" aria-label="Punto decimal">.</button>
+          <button type="button" class="key equals" data-action="equals" aria-label="Igual">=</button>
+        </div>
+      </section>
+      <p class="sr-only" id="liveRegion" aria-live="polite"></p>
+    </main>
+
+    <script>
+      (function(){
+        "use strict";
+
+        // ---------- State ----------
+        var displayStr = "0";   // number currently being typed / shown
+        var acc = null;         // accumulated value
+        var pendingOp = null;   // '+', '-', '*', '/'
+        var waiting = false;    // next digit starts a fresh number
+        var lastExpr = "";      // e.g. "12 + 8 =" after equals
+        var ivuOn = true;       // the single 11.5% toggle: on = IVU applied
+        var RATE = 11.5;
+        var editing = false;    // in-place edit mode on the big number
+        var caret = 0;          // caret position: index into displayStr (sits before displayStr[caret])
+        var ivuIncl = false;    // "IVU incluido" mode: the entry is a price that already includes the IVU
+        var activeField = null; // null | 'disc' | 'tip' | 'people': field the keypad writes into
+        var fieldFresh = false; // just selected: the first keystroke replaces the field's value
+        var fieldCaret = 0;     // caret position inside the active field (sits before str[fieldCaret])
+        var discStr = "0";      // field values as typed text (no <input> anywhere:
+        var tipStr = "0";       // the calculator keypad is the only keyboard)
+        var peopleStr = "1";
+
+        // ---------- Elements ----------
+        var exprEl = document.getElementById("expr");
+        var amountEl = document.getElementById("amountDisplay");
+        var amountLabelEl = document.getElementById("amountLabel");
+        var noteEl = document.getElementById("appliedNote");
+        var ivuToggle = document.getElementById("ivuToggle");
+        var discBox = document.getElementById("discBox");
+        var tipBox = document.getElementById("tipBox");
+        var peopleBox = document.getElementById("peopleBox");
+        var discValue = document.getElementById("discValue");
+        var tipValue = document.getElementById("tipValue");
+        var peopleValue = document.getElementById("peopleValue");
+        var displaySection = document.getElementById("displaySection");
+        var liveEl = document.getElementById("liveRegion");
+
+        var OP_SYMBOL = { "+": "+", "-": "−", "*": "×", "/": "÷" };
+        var moneyFmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+        function fmtMoney(n){
+          if (!isFinite(n)) return "$0.00";
+          return moneyFmt.format(n);
+        }
+        function fmtNum(n){
+          if (!isFinite(n)) return "0";
+          var s = String(Math.round(n * 10000000000) / 10000000000);
+          var parts = s.split(".");
+          parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+          return parts.join(".");
+        }
+        function fmtEntry(str){
+          var neg = str.charAt(0) === "-";
+          var body = neg ? str.slice(1) : str;
+          var parts = body.split(".");
+          parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+          if (parts[0] === "") parts[0] = "0";
+          return (neg ? "−" : "") + parts.join(".");
+        }
+        function round2(n){ return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+        // ---------- In-place editing of the entry ----------
+        function minCaret(){ return displayStr.charAt(0) === "-" ? 1 : 0; }
+
+        // Keep displayStr a clean number after a mid-string edit; caret follows.
+        function normalizeEntry(){
+          if (displayStr === "" || displayStr === "-"){ displayStr = "0"; caret = 1; return; }
+          var neg = displayStr.charAt(0) === "-";
+          var body = neg ? displayStr.slice(1) : displayStr;
+          var c = caret - (neg ? 1 : 0);
+          if (c < 0) c = 0;
+          var dot = body.indexOf(".");
+          var intPart = dot === -1 ? body : body.slice(0, dot);
+          var fracPart = dot === -1 ? null : body.slice(dot + 1);
+          if (intPart === ""){
+            intPart = "0";
+            c += 1; // the synthetic 0 goes in front of the dot/digits
+          } else {
+            var stripped = 0;
+            while (intPart.length > 1 && intPart.charAt(0) === "0"){ intPart = intPart.slice(1); stripped++; }
+            c = Math.max(0, c - stripped);
+          }
+          displayStr = (neg ? "-" : "") + intPart + (fracPart !== null ? "." + fracPart : "");
+          caret = c + (neg ? 1 : 0);
+          if (caret > displayStr.length) caret = displayStr.length;
+          if (caret < minCaret()) caret = minCaret();
+        }
+
+        // While "15 ×" waits, the number on screen IS displayStr/acc: keep them in sync.
+        function syncAccFromEntry(){
+          if (waiting && acc !== null){
+            var v = parseFloat(displayStr);
+            acc = isNaN(v) ? 0 : v;
+          }
+        }
+
+        // Entry as typed ("$1,234") with each raw char in a span and the caret in place.
+        function entryHTML(str, caretPos){
+          var neg = str.charAt(0) === "-";
+          var body = neg ? str.slice(1) : str;
+          var off = neg ? 1 : 0;
+          var dot = body.indexOf(".");
+          var intPart = dot === -1 ? body : body.slice(0, dot);
+          var fracPart = dot === -1 ? null : body.slice(dot + 1);
+          var mark = '<span class="caret" aria-hidden="true"></span>';
+          function ch(rawPos, txt){ return '<span class="ch" data-i="' + rawPos + '">' + txt + '</span>'; }
+          var html = "$";
+          var j, rp;
+          if (caretPos === 0) html += mark;
+          if (neg){ html += ch(0, "−"); if (caretPos === 1) html += mark; }
+          for (j = 0; j < intPart.length; j++){
+            rp = off + j;
+            if (j > 0){
+              if (caretPos === rp) html += mark;
+              if ((intPart.length - j) % 3 === 0) html += ",";
+            }
+            html += ch(rp, intPart.charAt(j));
+          }
+          if (fracPart !== null){
+            var dp = off + intPart.length;
+            if (caretPos === dp) html += mark;
+            html += ch(dp, ".");
+            for (var k = 0; k < fracPart.length; k++){
+              var fp = dp + 1 + k;
+              if (caretPos === fp) html += mark;
+              html += ch(fp, fracPart.charAt(k));
+            }
+          }
+          if (caretPos === str.length) html += mark;
+          return html;
+        }
+
+        // Map a tap point to the nearest caret boundary of the rendered entry.
+        function placeCaretFromPoint(x, y){
+          var spans = amountEl.querySelectorAll(".ch");
+          if (!spans.length){ caret = displayStr.length; return; }
+          var best = -1, bestD = Infinity;
+          function consider(pos, bx, by){
+            var dx = x - bx, dy = y - by, d = dx * dx + dy * dy;
+            if (d < bestD){ bestD = d; best = pos; }
+          }
+          for (var i = 0; i < spans.length; i++){
+            var r = spans[i].getBoundingClientRect();
+            var cy = r.top + r.height / 2;
+            var pos = parseInt(spans[i].getAttribute("data-i"), 10);
+            consider(pos, r.left, cy);
+            consider(pos + 1, r.right, cy);
+          }
+          if (best < minCaret()) best = minCaret();
+          if (best > displayStr.length) best = displayStr.length;
+          caret = best;
+        }
+
+        function enterEdit(x, y){
+          if (!editing){ editing = true; caret = displayStr.length; }
+          render(); // show the entry as typed, then measure its real glyphs
+          placeCaretFromPoint(x, y);
+          render();
+        }
+        function exitEdit(){ if (editing){ editing = false; render(); } }
+
+        function getDisc(){
+          var v = parseFloat(discStr);
+          if (isNaN(v)) return 0;
+          if (v < 0) return 0;
+          if (v > 100) return 100;
+          return v;
+        }
+        function getTip(){
+          var v = parseFloat(tipStr);
+          if (isNaN(v)) return 0;
+          if (v < 0) return 0;
+          if (v > 100) return 100;
+          return v;
+        }
+        function getPeople(){
+          var v = parseInt(peopleStr, 10);
+          if (isNaN(v) || v < 1) return 1;
+          if (v > 999) return 999;
+          return v;
+        }
+
+        // ---------- Settings fields: selected by tap, written by the keypad ----------
+        function fieldStr(name){ return name === "disc" ? discStr : name === "tip" ? tipStr : peopleStr; }
+        function setFieldStr(name, v){ if (name === "disc") discStr = v; else if (name === "tip") tipStr = v; else peopleStr = v; }
+        function setActiveField(name){
+          activeField = name;
+          discBox.classList.toggle("selected", name === "disc");
+          tipBox.classList.toggle("selected", name === "tip");
+          peopleBox.classList.toggle("selected", name === "people");
+        }
+        function fieldValueEl(name){ return name === "disc" ? discValue : name === "tip" ? tipValue : peopleValue; }
+
+        // Field value as typed, with each char in a span and the blinking
+        // caret in place — the same rendering the big number uses in edit mode.
+        function fieldHTML(str, caretPos){
+          var mark = '<span class="caret" aria-hidden="true"></span>';
+          var html = "";
+          for (var i = 0; i < str.length; i++){
+            if (caretPos === i) html += mark;
+            html += '<span class="ch" data-i="' + i + '">' + str.charAt(i) + '</span>';
+          }
+          if (caretPos === str.length) html += mark;
+          return html;
+        }
+        function syncFields(){
+          discValue.innerHTML = activeField === "disc" ? fieldHTML(discStr, fieldCaret) : discStr;
+          tipValue.innerHTML = activeField === "tip" ? fieldHTML(tipStr, fieldCaret) : tipStr;
+          peopleValue.innerHTML = activeField === "people" ? fieldHTML(peopleStr, fieldCaret) : peopleStr;
+          discBox.setAttribute("aria-valuenow", String(getDisc()));
+          tipBox.setAttribute("aria-valuenow", String(getTip()));
+          peopleBox.setAttribute("aria-valuenow", String(getPeople()));
+        }
+
+        // Map a tap point inside the active field to its nearest caret boundary.
+        function placeFieldCaretFromPoint(name, x, y){
+          var spans = fieldValueEl(name).querySelectorAll(".ch");
+          var len = fieldStr(name).length;
+          if (!spans.length){ fieldCaret = len; return; }
+          var best = len, bestD = Infinity;
+          function consider(pos, bx, by){
+            var dx = x - bx, dy = y - by, d = dx * dx + dy * dy;
+            if (d < bestD){ bestD = d; best = pos; }
+          }
+          for (var i = 0; i < spans.length; i++){
+            var r = spans[i].getBoundingClientRect();
+            var cy = r.top + r.height / 2;
+            var pos = parseInt(spans[i].getAttribute("data-i"), 10);
+            consider(pos, r.left, cy);
+            consider(pos + 1, r.right, cy);
+          }
+          if (best < 0) best = 0;
+          if (best > len) best = len;
+          fieldCaret = best;
+        }
+
+        // Keep the active field's text a clean number after a mid-string edit;
+        // the caret follows the edit, and the field's limits still apply.
+        function normalizeField(){
+          var name = activeField;
+          var isPeople = name === "people";
+          var fallback = isPeople ? "1" : "0";
+          var cur = fieldStr(name);
+          if (cur === ""){ setFieldStr(name, fallback); fieldCaret = fallback.length; return; }
+          if (isPeople){
+            var strippedP = 0;
+            while (cur.length > 1 && cur.charAt(0) === "0"){ cur = cur.slice(1); strippedP++; }
+            fieldCaret = Math.max(0, fieldCaret - strippedP);
+            setFieldStr(name, cur);
+          } else {
+            if (cur === "."){ setFieldStr(name, "0."); fieldCaret = 2; return; }
+            var dot = cur.indexOf(".");
+            var intPart = dot === -1 ? cur : cur.slice(0, dot);
+            var fracPart = dot === -1 ? null : cur.slice(dot + 1);
+            if (intPart === ""){
+              intPart = "0";
+              fieldCaret += 1; // the synthetic 0 goes in front of the dot/digits
+            } else {
+              var stripped = 0;
+              while (intPart.length > 1 && intPart.charAt(0) === "0"){ intPart = intPart.slice(1); stripped++; }
+              fieldCaret = Math.max(0, fieldCaret - stripped);
+            }
+            setFieldStr(name, intPart + (fracPart !== null ? "." + fracPart : ""));
+          }
+          var now = fieldStr(name);
+          if (fieldCaret > now.length) fieldCaret = now.length;
+          if (fieldCaret < 0) fieldCaret = 0;
+          var max = isPeople ? 999 : 100;
+          var v = parseFloat(now);
+          if (!isNaN(v) && v > max){ setFieldStr(name, String(max)); fieldCaret = String(max).length; }
+        }
+
+        function fieldDigit(d){
+          var cur = fieldStr(activeField);
+          if (fieldFresh){ // first digit replaces the whole value (0 -> "2", Personas 1 -> "6")
+            fieldFresh = false;
+            setFieldStr(activeField, d);
+            fieldCaret = 1;
+            normalizeField();
+            render();
+            return;
+          }
+          var next = cur.slice(0, fieldCaret) + d + cur.slice(fieldCaret);
+          if (next.replace(/[^0-9]/g, "").length > 6) return;
+          setFieldStr(activeField, next);
+          fieldCaret++;
+          normalizeField();
+          render();
+        }
+        function fieldDot(){
+          if (activeField === "people") return; // Personas: integers only
+          if (fieldFresh){ fieldFresh = false; setFieldStr(activeField, "0."); fieldCaret = 2; render(); return; }
+          var cur = fieldStr(activeField);
+          if (cur.indexOf(".") === -1){
+            setFieldStr(activeField, cur.slice(0, fieldCaret) + "." + cur.slice(fieldCaret));
+            fieldCaret++;
+            normalizeField();
+          }
+          render();
+        }
+        function fieldBackspace(){
+          fieldFresh = false;
+          if (fieldCaret <= 0){ render(); return; }
+          var cur = fieldStr(activeField);
+          setFieldStr(activeField, cur.slice(0, fieldCaret - 1) + cur.slice(fieldCaret));
+          fieldCaret--;
+          normalizeField(); // an emptied field falls back to 0 (Personas: 1)
+          render();
+        }
+
+        function applyOp(a, b, op){
+          switch(op){
+            case "+": return a + b;
+            case "-": return a - b;
+            case "*": return a * b;
+            case "/": return b === 0 ? NaN : a / b;
+          }
+          return b;
+        }
+
+        // The amount the calculation is based on right now.
+        function currentAmount(){
+          var cur = parseFloat(displayStr);
+          if (isNaN(cur)) cur = 0;
+          if (acc !== null && pendingOp){
+            if (waiting) return acc;
+            var r = applyOp(acc, cur, pendingOp);
+            return isNaN(r) ? 0 : r;
+          }
+          return cur;
+        }
+
+        // ---------- Calculation ----------
+        function compute(){
+          var amt = currentAmount();
+          var incl = ivuIncl && ivuOn;
+          // In "IVU incluido" mode the typed amount already carries the IVU:
+          // the working base is the amount with the IVU backed out.
+          var baseAmt = incl ? round2(amt / (1 + RATE / 100)) : amt;
+          var disc = getDisc();
+          var tip = getTip();
+          var discAmt = round2(baseAmt * disc / 100);
+          var subtotal = round2(baseAmt - baseAmt * disc / 100);
+          var tipAmt = round2(subtotal * tip / 100);
+          var ivuAmt = ivuOn ? round2(subtotal * RATE / 100) : 0;
+          var total = round2(subtotal + ivuAmt + tipAmt);
+          var people = getPeople();
+          var perPerson = people >= 2 ? round2(total / people) : null;
+          return { amt: amt, incl: incl, disc: disc, tip: tip, discAmt: discAmt, subtotal: subtotal, tipAmt: tipAmt, ivuAmt: ivuAmt, total: total, people: people, perPerson: perPerson };
+        }
+
+        function render(){
+          var b = compute();
+
+          // Expression trail
+          var exprText = "";
+          if (acc !== null && pendingOp){
+            exprText = fmtNum(acc) + " " + OP_SYMBOL[pendingOp] + (waiting ? "" : " " + fmtEntry(displayStr));
+          } else if (lastExpr){
+            exprText = lastExpr;
+          }
+          exprEl.innerHTML = exprText ? exprText.replace(/-/g, "−") : "&nbsp;";
+
+          var typingPlain = acc === null && !waiting;
+          if (editing){
+            amountLabelEl.textContent = "Cantidad";
+            amountEl.innerHTML = entryHTML(displayStr, caret);
+          } else if (!ivuOn && b.disc === 0 && b.tip === 0 && typingPlain){
+            amountLabelEl.textContent = "Cantidad";
+            amountEl.textContent = "$" + fmtEntry(displayStr === "-" ? "0" : displayStr);
+          } else if (acc !== null && pendingOp && !ivuOn && b.disc === 0 && b.tip === 0){
+            amountLabelEl.textContent = "Resultado parcial";
+            amountEl.textContent = fmtMoney(b.amt);
+          } else if (b.incl){
+            amountLabelEl.textContent = "Base";
+            amountEl.textContent = fmtMoney(b.subtotal);
+          } else {
+            amountLabelEl.textContent = (ivuOn || b.tip > 0) ? "Total" : "Con descuento";
+            amountEl.textContent = fmtMoney(b.total);
+          }
+
+          var notes = [];
+          if (b.incl){
+            notes.push("Base " + fmtMoney(b.subtotal));
+            notes.push("IVU " + fmtMoney(b.ivuAmt) + " incluido");
+          } else if (ivuOn){
+            notes.push("Base " + fmtMoney(b.subtotal));
+            notes.push("IVU " + fmtMoney(b.ivuAmt));
+          } else {
+            notes.push("IVU apagado");
+          }
+          if (b.disc > 0) notes.push("Desc. " + fmtMoney(b.discAmt));
+          if (b.tip > 0) notes.push("Tip " + fmtMoney(b.tipAmt));
+          if (b.perPerson !== null) notes.push(fmtMoney(b.perPerson) + " c/u");
+          noteEl.textContent = notes.join(" · ");
+
+          liveEl.textContent = b.incl ? "Base: " + fmtMoney(b.subtotal) : (ivuOn ? "Total: " : "Cantidad: ") + fmtMoney(b.total);
+          syncFields();
+          return b;
+        }
+
+        // ---------- Calculator actions ----------
+        function inputDigit(d){
+          if (activeField){ fieldDigit(d); return; }
+          if (editing){
+            if (displayStr.replace(/[^0-9]/g, "").length >= 12) return;
+            displayStr = displayStr.slice(0, caret) + d + displayStr.slice(caret);
+            caret++;
+            normalizeEntry();
+            syncAccFromEntry();
+            render();
+            return;
+          }
+          if (waiting){ displayStr = d; waiting = false; lastExpr = ""; }
+          else {
+            if (displayStr.replace(/[^0-9]/g, "").length >= 12) return;
+            displayStr = (displayStr === "0") ? d : (displayStr === "-0" ? "-" + d : displayStr + d);
+          }
+          render();
+        }
+        function inputDot(){
+          if (activeField){ fieldDot(); return; }
+          if (editing){
+            if (displayStr.indexOf(".") === -1){
+              displayStr = displayStr.slice(0, caret) + "." + displayStr.slice(caret);
+              caret++;
+              normalizeEntry();
+              syncAccFromEntry();
+            }
+            render();
+            return;
+          }
+          if (waiting){ displayStr = "0."; waiting = false; lastExpr = ""; }
+          else if (displayStr.indexOf(".") === -1){ displayStr += "."; }
+          render();
+        }
+        function handleOp(op){
+          editing = false;
+          setActiveField(null);
+          var cur = parseFloat(displayStr);
+          if (isNaN(cur)) cur = 0;
+          if (acc !== null && pendingOp && !waiting){
+            var r = applyOp(acc, cur, pendingOp);
+            if (isNaN(r)){ clearAll(); exprEl.textContent = "No se puede dividir entre 0"; return; }
+            acc = r;
+            displayStr = String(Math.round(r * 10000000000) / 10000000000);
+          } else if (acc === null || waiting){
+            acc = (acc !== null && waiting) ? acc : cur;
+            if (acc === null) acc = cur;
+          }
+          pendingOp = op;
+          waiting = true;
+          lastExpr = "";
+          render();
+        }
+        function doEquals(){
+          editing = false;
+          setActiveField(null);
+          var cur = parseFloat(displayStr);
+          if (isNaN(cur)) cur = 0;
+          if (acc !== null && pendingOp){
+            var r = applyOp(acc, cur, pendingOp);
+            if (isNaN(r)){ clearAll(); exprEl.textContent = "No se puede dividir entre 0"; return; }
+            lastExpr = fmtNum(acc) + " " + OP_SYMBOL[pendingOp] + " " + fmtNum(cur) + " =";
+            displayStr = String(Math.round(r * 10000000000) / 10000000000);
+            acc = null; pendingOp = null; waiting = true;
+          }
+          render();
+        }
+        function clearAll(){
+          editing = false;
+          setActiveField(null);
+          if (ivuIncl){ ivuIncl = false; updateIvuButton(); }
+          displayStr = "0"; acc = null; pendingOp = null; waiting = false; lastExpr = "";
+          render();
+        }
+        function backspace(){
+          if (activeField){ fieldBackspace(); return; }
+          if (editing){
+            if (caret > minCaret()){
+              displayStr = displayStr.slice(0, caret - 1) + displayStr.slice(caret);
+              caret--;
+              normalizeEntry();
+              syncAccFromEntry();
+            }
+            render();
+            return;
+          }
+          if (waiting) return;
+          displayStr = displayStr.length > 1 ? displayStr.slice(0, -1) : "0";
+          if (displayStr === "-" || displayStr === "") displayStr = "0";
+          render();
+        }
+        function toggleSign(){
+          var wasNeg = displayStr.charAt(0) === "-";
+          if (waiting && acc === null){
+            if (displayStr !== "0") displayStr = displayStr.charAt(0) === "-" ? displayStr.slice(1) : "-" + displayStr;
+          } else if (!waiting){
+            if (displayStr !== "0") displayStr = displayStr.charAt(0) === "-" ? displayStr.slice(1) : "-" + displayStr;
+          }
+          if (editing){
+            var isNeg = displayStr.charAt(0) === "-";
+            if (isNeg && !wasNeg) caret++;
+            else if (!isNeg && wasNeg) caret--;
+            if (caret < minCaret()) caret = minCaret();
+            if (caret > displayStr.length) caret = displayStr.length;
+          }
+          render();
+        }
+
+        document.getElementById("keypad").addEventListener("click", function(e){
+          var btn = e.target.closest("button");
+          if (!btn) return;
+          if (btn.dataset.digit !== undefined && btn.dataset.digit !== "") inputDigit(btn.dataset.digit);
+          else if (btn.dataset.op) handleOp(btn.dataset.op);
+          else if (btn.dataset.action === "dot") inputDot();
+          else if (btn.dataset.action === "equals") doEquals();
+          else if (btn.dataset.action === "clear") clearAll();
+          else if (btn.dataset.action === "back") backspace();
+          else if (btn.dataset.action === "sign") toggleSign();
+        });
+
+        // ---------- Swipe on the display deletes one digit (like iPhone) ----------
+        var swipeX = null, swipeY = null;
+        function swipeStart(x, y){ swipeX = x; swipeY = y; }
+        function swipeEnd(x, y){
+          if (swipeX === null) return;
+          var dx = x - swipeX, dy = y - swipeY;
+          swipeX = null; swipeY = null;
+          if (Math.abs(dx) >= 24 && Math.abs(dx) > Math.abs(dy)) backspace();
+        }
+        displaySection.addEventListener("touchstart", function(e){
+          if (e.touches.length === 1) swipeStart(e.touches[0].clientX, e.touches[0].clientY);
+        }, { passive: true });
+        displaySection.addEventListener("touchend", function(e){
+          if (e.changedTouches.length === 1) swipeEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+        }, { passive: true });
+        displaySection.addEventListener("mousedown", function(e){ swipeStart(e.clientX, e.clientY); });
+        displaySection.addEventListener("mouseup", function(e){ swipeEnd(e.clientX, e.clientY); });
+
+        // ---------- Tap on the big number: edit the entry in place ----------
+        // A short tap (barely any movement) positions the caret; a swipe still
+        // deletes a digit via the handlers above; a long press (~500 ms)
+        // pastes from the clipboard instead. The three never conflict.
+        var pDown = null, pasteTimer = null, pasteFired = false;
+        amountEl.addEventListener("pointerdown", function(e){
+          setActiveField(null); // touching the big number leaves field selection
+          pDown = { x: e.clientX, y: e.clientY };
+          pasteFired = false;
+          if (pasteTimer) clearTimeout(pasteTimer);
+          pasteTimer = setTimeout(function(){ pasteFired = true; doPaste(); }, 500);
+        });
+        amountEl.addEventListener("pointercancel", function(){
+          pDown = null;
+          if (pasteTimer){ clearTimeout(pasteTimer); pasteTimer = null; }
+        });
+        amountEl.addEventListener("pointerup", function(e){
+          if (pasteTimer){ clearTimeout(pasteTimer); pasteTimer = null; }
+          if (pasteFired){ pasteFired = false; pDown = null; return; }
+          if (!pDown) return;
+          var dx = e.clientX - pDown.x, dy = e.clientY - pDown.y;
+          pDown = null;
+          if (dx * dx + dy * dy > 100) return; // it was a swipe, not a tap
+          enterEdit(e.clientX, e.clientY);
+        });
+        amountEl.addEventListener("contextmenu", function(e){ e.preventDefault(); });
+
+        // ---------- Paste a number as the current amount ----------
+        function extractNumber(text){
+          if (!text) return null;
+          var m = String(text).match(/-?\d[\d,]*(?:\.\d+)?/);
+          if (!m) return null;
+          var v = parseFloat(m[0].replace(/,/g, ""));
+          if (isNaN(v) || !isFinite(v)) return null;
+          return v;
+        }
+        function applyPastedText(text){
+          var v = extractNumber(text);
+          if (v === null) return; // no number in the clipboard: nothing happens
+          editing = false;
+          displayStr = String(Math.round(v * 10000000000) / 10000000000);
+          if (waiting){ waiting = false; lastExpr = ""; }
+          render();
+        }
+        function doPaste(){
+          if (!navigator.clipboard || !navigator.clipboard.readText) return;
+          navigator.clipboard.readText().then(function(text){
+            applyPastedText(text);
+          }).catch(function(){ /* permission denied: nothing happens */ });
+        }
+        // Desktop paste (Ctrl+V) anywhere outside the settings fields works too.
+        document.addEventListener("paste", function(e){
+          var cd = e.clipboardData || window.clipboardData;
+          var text = cd ? cd.getData("text") : "";
+          if (text){ e.preventDefault(); applyPastedText(text); }
+        });
+
+        document.addEventListener("keydown", function(e){
+          if (e.target && e.target.classList && e.target.classList.contains("field-box") && (e.key === "Enter" || e.key === " ")){
+            e.preventDefault();
+            e.target.click(); // keyboard selection of a field: same as tapping it
+            return;
+          }
+          if (editing && (e.key === "ArrowLeft" || e.key === "ArrowRight")){
+            e.preventDefault();
+            caret += (e.key === "ArrowLeft" ? -1 : 1);
+            if (caret < minCaret()) caret = minCaret();
+            if (caret > displayStr.length) caret = displayStr.length;
+            render();
+            return;
+          }
+          if (activeField && (e.key === "ArrowLeft" || e.key === "ArrowRight")){
+            e.preventDefault();
+            fieldFresh = false;
+            fieldCaret += (e.key === "ArrowLeft" ? -1 : 1);
+            if (fieldCaret < 0) fieldCaret = 0;
+            var fl = fieldStr(activeField).length;
+            if (fieldCaret > fl) fieldCaret = fl;
+            render();
+            return;
+          }
+          if (/^[0-9]$/.test(e.key)) inputDigit(e.key);
+          else if (e.key === "." || e.key === ",") { e.preventDefault(); inputDot(); }
+          else if (e.key === "+" || e.key === "-" || e.key === "*" || e.key === "/") { e.preventDefault(); handleOp(e.key); }
+          else if (e.key === "Enter" || e.key === "=") { e.preventDefault(); doEquals(); }
+          else if (e.key === "Backspace") backspace();
+          else if (e.key === "Escape") clearAll();
+        });
+
+        // ---------- IVU toggle: on applies 11.5%, off does not ----------
+        function updateIvuButton(){
+          ivuToggle.textContent = ivuIncl ? "11.5% incl." : "11.5%";
+          if (ivuIncl) ivuToggle.classList.add("incl"); else ivuToggle.classList.remove("incl");
+        }
+        ivuToggle.addEventListener("click", function(){
+          if (ivuLongFired){ ivuLongFired = false; return; } // the long press already handled it
+          editing = false;
+          setActiveField(null);
+          ivuOn = !ivuOn;
+          if (!ivuOn) ivuIncl = false;
+          ivuToggle.setAttribute("aria-pressed", ivuOn ? "true" : "false");
+          updateIvuButton();
+          render();
+        });
+
+        // ---------- Long press (~600 ms) on 11.5%: "IVU incluido" mode ----------
+        var ivuLongTimer = null, ivuLongFired = false;
+        function toggleInclMode(){
+          editing = false;
+          setActiveField(null);
+          ivuIncl = !ivuIncl;
+          if (ivuIncl){ ivuOn = true; ivuToggle.setAttribute("aria-pressed", "true"); }
+          updateIvuButton();
+          render();
+        }
+        ivuToggle.addEventListener("pointerdown", function(){
+          ivuLongFired = false;
+          if (ivuLongTimer) clearTimeout(ivuLongTimer);
+          ivuLongTimer = setTimeout(function(){ ivuLongFired = true; toggleInclMode(); }, 600);
+        });
+        function cancelIvuLong(){ if (ivuLongTimer){ clearTimeout(ivuLongTimer); ivuLongTimer = null; } }
+        ivuToggle.addEventListener("pointerup", cancelIvuLong);
+        ivuToggle.addEventListener("pointercancel", cancelIvuLong);
+        ivuToggle.addEventListener("pointerleave", cancelIvuLong);
+
+        // ---------- Settings fields: tap selects; the keypad writes into them ----------
+        // The fields are plain elements, never focusable inputs, so no system
+        // keyboard can ever appear: the calculator keypad is the only keyboard.
+        function selectField(name){
+          editing = false;
+          setActiveField(name);
+          fieldFresh = true;
+          fieldCaret = fieldStr(name).length; // caret at the end; first keystroke replaces
+          render();
+        }
+        // First tap selects the field (caret at the end, replace-on-type armed).
+        // A tap on the ALREADY selected field just moves the caret to the digit
+        // nearest the tap and disarms the replace: typing inserts there instead.
+        function tapField(name, x, y){
+          if (activeField === name && (x !== 0 || y !== 0)){
+            fieldFresh = false;
+            render(); // make sure the caret rendering is on screen to measure
+            placeFieldCaretFromPoint(name, x, y);
+            render();
+          } else {
+            selectField(name);
+          }
+        }
+        discBox.addEventListener("click", function(e){ tapField("disc", e.clientX, e.clientY); });
+        tipBox.addEventListener("click", function(e){ tapField("tip", e.clientX, e.clientY); });
+        peopleBox.addEventListener("click", function(e){ tapField("people", e.clientX, e.clientY); });
+
+        render();
+      })();
+    </script>
+  </body>
+</html>
