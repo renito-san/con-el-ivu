@@ -265,13 +265,14 @@
           var amt = currentAmount();
           var disc = getDisc();
           var tip = getTip();
+          var discAmt = round2(amt * disc / 100);
           var subtotal = round2(amt - amt * disc / 100);
           var tipAmt = round2(subtotal * tip / 100);
-          var total = ivuOn ? round2(subtotal + subtotal * RATE / 100) : subtotal;
-          total = round2(total + tipAmt);
+          var ivuAmt = ivuOn ? round2(subtotal * RATE / 100) : 0;
+          var total = round2(subtotal + ivuAmt + tipAmt);
           var people = getPeople();
           var perPerson = people >= 2 ? round2(total / people) : null;
-          return { amt: amt, disc: disc, tip: tip, subtotal: subtotal, tipAmt: tipAmt, total: total, people: people, perPerson: perPerson };
+          return { amt: amt, disc: disc, tip: tip, discAmt: discAmt, subtotal: subtotal, tipAmt: tipAmt, ivuAmt: ivuAmt, total: total, people: people, perPerson: perPerson };
         }
 
         function render(){
@@ -299,9 +300,9 @@
           }
 
           var notes = [];
-          notes.push(ivuOn ? "IVU 11.5%" : "IVU apagado");
-          if (b.disc > 0) notes.push("Desc. " + b.disc + "%");
-          if (b.tip > 0) notes.push("Tip " + b.tip + "%");
+          notes.push(ivuOn ? "IVU " + fmtMoney(b.ivuAmt) : "IVU apagado");
+          if (b.disc > 0) notes.push("Desc. " + fmtMoney(b.discAmt));
+          if (b.tip > 0) notes.push("Tip " + fmtMoney(b.tipAmt));
           if (b.perPerson !== null) notes.push(fmtMoney(b.perPerson) + " c/u");
           noteEl.textContent = notes.join(" · ");
 
